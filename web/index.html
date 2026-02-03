@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MedBox Motor Control</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 500px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .status {
+            text-align: center;
+            padding: 12px;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .status.disconnected {
+            background: #fee;
+            color: #c33;
+        }
+
+        .status.connected {
+            background: #efe;
+            color: #3c3;
+        }
+
+        .connect-btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 30px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .connect-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .connect-btn:active {
+            transform: translateY(0);
+        }
+
+        .connect-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .control-btn {
+            padding: 20px;
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            font-size: 20px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #667eea;
+        }
+
+        .control-btn:hover:not(:disabled) {
+            background: #667eea;
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .control-btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .control-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .control-btn.positive {
+            border-color: #10b981;
+            color: #10b981;
+        }
+
+        .control-btn.positive:hover:not(:disabled) {
+            background: #10b981;
+            color: white;
+        }
+
+        .control-btn.negative {
+            border-color: #ef4444;
+            color: #ef4444;
+        }
+
+        .control-btn.negative:hover:not(:disabled) {
+            background: #ef4444;
+            color: white;
+        }
+
+        .info {
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #fff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+            margin-left: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                padding: 25px;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            .control-btn {
+                padding: 15px;
+                font-size: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 MedBox Motor Control</h1>
+        <p class="subtitle">Stepper Motor Calibration via BLE</p>
+        
+        <div id="status" class="status disconnected">
+            Nicht verbunden
+        </div>
+
+        <button id="connectBtn" class="connect-btn">
+            Mit MedBox verbinden
+        </button>
+
+        <div class="controls">
+            <button class="control-btn positive" data-steps="100" disabled>+100</button>
+            <button class="control-btn positive" data-steps="10" disabled>+10</button>
+            <button class="control-btn positive" data-steps="1" disabled>+1</button>
+            <button class="control-btn negative" data-steps="-1" disabled>-1</button>
+            <button class="control-btn negative" data-steps="-10" disabled>-10</button>
+            <button class="control-btn negative" data-steps="-100" disabled>-100</button>
+        </div>
+
+        <p class="info">
+            Verwenden Sie die Tasten, um den Motor um 1, 10 oder 100 Schritte nach links (-) oder rechts (+) zu drehen.
+        </p>
+    </div>
+
+    <script>
+        const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+        const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+
+        let bleDevice = null;
+        let bleServer = null;
+        let characteristic = null;
+
+        const connectBtn = document.getElementById('connectBtn');
+        const statusDiv = document.getElementById('status');
+        const controlButtons = document.querySelectorAll('.control-btn');
+
+        // Check if Web Bluetooth is supported
+        if (!navigator.bluetooth) {
+            statusDiv.textContent = 'Web Bluetooth wird nicht unterstützt';
+            statusDiv.className = 'status disconnected';
+            connectBtn.disabled = true;
+            connectBtn.textContent = 'Browser unterstützt kein Web Bluetooth';
+        }
+
+        connectBtn.addEventListener('click', async () => {
+            if (bleDevice && bleDevice.gatt.connected) {
+                disconnect();
+            } else {
+                await connect();
+            }
+        });
+
+        async function connect() {
+            try {
+                connectBtn.innerHTML = 'Verbinde...<span class="loading"></span>';
+                connectBtn.disabled = true;
+
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: 'MedBox Motor' }],
+                    optionalServices: [SERVICE_UUID]
+                });
+
+                bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+                bleServer = await bleDevice.gatt.connect();
+                const service = await bleServer.getPrimaryService(SERVICE_UUID);
+                characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+
+                statusDiv.textContent = 'Verbunden mit ' + bleDevice.name;
+                statusDiv.className = 'status connected';
+                connectBtn.textContent = 'Trennen';
+                connectBtn.disabled = false;
+
+                // Enable control buttons
+                controlButtons.forEach(btn => btn.disabled = false);
+
+            } catch (error) {
+                console.error('Verbindungsfehler:', error);
+                statusDiv.textContent = 'Verbindung fehlgeschlagen: ' + error.message;
+                statusDiv.className = 'status disconnected';
+                connectBtn.textContent = 'Mit MedBox verbinden';
+                connectBtn.disabled = false;
+            }
+        }
+
+        function disconnect() {
+            if (bleDevice) {
+                bleDevice.gatt.disconnect();
+            }
+        }
+
+        function onDisconnected() {
+            statusDiv.textContent = 'Nicht verbunden';
+            statusDiv.className = 'status disconnected';
+            connectBtn.textContent = 'Mit MedBox verbinden';
+            connectBtn.disabled = false;
+
+            // Disable control buttons
+            controlButtons.forEach(btn => btn.disabled = true);
+
+            bleDevice = null;
+            bleServer = null;
+            characteristic = null;
+        }
+
+        // Add click handlers to control buttons
+        controlButtons.forEach(button => {
+            button.addEventListener('click', async () => {
+                if (!characteristic) return;
+
+                const steps = parseInt(button.dataset.steps);
+                try {
+                    let command;
+                    if (steps > 0) {
+                        if (steps === 1) command = '+0';
+                        else if (steps === 10) command = '+1';
+                        else if (steps === 100) command = '+2';
+                    } else {
+                        if (steps === -1) command = '-0';
+                        else if (steps === -10) command = '-1';
+                        else if (steps === -100) command = '-2';
+                    }
+
+                    const encoder = new TextEncoder();
+                    await characteristic.writeValue(encoder.encode(command));
+                    
+                    console.log('Befehl gesendet:', command, 'für', steps, 'Schritte');
+                    
+                    // Visual feedback
+                    button.style.transform = 'scale(0.95)';
+                    setTimeout(() => {
+                        button.style.transform = '';
+                    }, 100);
+
+                } catch (error) {
+                    console.error('Fehler beim Senden:', error);
+                    statusDiv.textContent = 'Fehler: ' + error.message;
+                    statusDiv.className = 'status disconnected';
+                }
+            });
+        });
+    </script>
+</body>
+</html>

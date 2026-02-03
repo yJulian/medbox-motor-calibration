@@ -1,45 +1,119 @@
 #include "stepper/Stepper.h"
-#include <ESP32Servo.h>
-#include <esp32-hal.h>
-
-#define MOVE_MS 1000
-#define DELAY_MS 2000
-
-#define MOVE_PIN 13
-#define DIRECTION_PIN 12
-#define SPEED_PIN 14
-#define DELAY_PIN 27
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+#include <Arduino.h>
 
 // Define number of steps per revolution:
 const int stepsPerRevolution = 2048;
 
-// Initialize the stepper library on pins 8 through 11:
+// Initialize the stepper library on pins 5, 18, 19, 21:
 Stepper myStepper = Stepper(stepsPerRevolution, 5, 18, 19, 21);
-Servo myservo;  // create servo object to control a servo
+
+// BLE Service and Characteristic UUIDs
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+BLEServer* pServer = NULL;
+BLECharacteristic* pCharacteristic = NULL;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+      Serial.println("Device connected");
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+      Serial.println("Device disconnected");
+    }
+};
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      std::string value = pCharacteristic->getValue();
+
+      if (value.length() > 0) {
+        Serial.print("Received value: ");
+        for (int i = 0; i < value.length(); i++) {
+          Serial.print(value[i]);
+        }
+        Serial.println();
+
+        // Parse the command: format is a single character representing the step command
+        // '+' = positive, '-' = negative
+        // '1', 'A', 'B' for 1, 10, 100
+        char cmd = value[0];
+        
+        int8_t sign = value[0] == '+' ? 1 : (value[0] == '-' ? -1 : 0);
+        int8_t exponent = value[1] - '0';
+        int steps = sign * pow(10, exponent);
+        
+        if (steps != 0) {
+          Serial.print("Moving motor: ");
+          Serial.print(steps);
+          Serial.println(" steps");
+          myStepper.step(steps);
+        }
+      }
+    }
+};
 
 void setup() {
+  Serial.begin(115200);
+  Serial.println("Starting BLE Motor Control");
+
   myStepper.setSpeed(16);
 
-  pinMode(MOVE_PIN, INPUT_PULLUP);
-  pinMode(DIRECTION_PIN, INPUT_PULLUP);
-  pinMode(SPEED_PIN, INPUT_PULLUP);
-  pinMode(DELAY_PIN, INPUT_PULLUP);
+  // Create the BLE Device
+  BLEDevice::init("MedBox Motor");
 
+  // Create the BLE Server
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create the BLE Service
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // Create a BLE Characteristic
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ   |
+                      BLECharacteristic::PROPERTY_WRITE  |
+                      BLECharacteristic::PROPERTY_NOTIFY |
+                      BLECharacteristic::PROPERTY_INDICATE
+                    );
+
+  pCharacteristic->setCallbacks(new MyCallbacks());
+  pCharacteristic->addDescriptor(new BLE2902());
+
+  // Start the service
+  pService->start();
+
+  // Start advertising
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(false);
+  pAdvertising->setMinPreferred(0x00);  // set value to 0x00 to not advertise this parameter
+  BLEDevice::startAdvertising();
+  Serial.println("Waiting for a client connection to notify...");
 }
-void loop() {
-  int state = digitalRead(MOVE_PIN);
-  int delay_ms = digitalRead(DELAY_PIN) == HIGH ? 1000 : 100;
 
-  if (state == HIGH) {
-    delay(delay_ms);
-    return;
+void loop() {
+  // Disconnecting
+  if (!deviceConnected && oldDeviceConnected) {
+    delay(500); // give the bluetooth stack the chance to get things ready
+    pServer->startAdvertising(); // restart advertising
+    Serial.println("Start advertising");
+    oldDeviceConnected = deviceConnected;
   }
-  int direction = digitalRead(DIRECTION_PIN);
-  int speed = digitalRead(SPEED_PIN) == HIGH ? 32 : 8;
-  if (direction == HIGH) {
-    myStepper.step(speed);
-  } else {
-    myStepper.step(-speed);
+  // Connecting
+  if (deviceConnected && !oldDeviceConnected) {
+    oldDeviceConnected = deviceConnected;
   }
-  delay(delay_ms);
+  
+  delay(10);
 }
