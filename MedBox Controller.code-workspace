@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../MedBox Controller"
+		},
+		{
+			"name": "Testbench",
+			"path": "."
+		}
+	],
+	"settings": {}
+}
