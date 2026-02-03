@@ -3,6 +3,7 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <Arduino.h>
 
 // Define number of steps per revolution:
 const int stepsPerRevolution = 2048;
@@ -46,20 +47,11 @@ class MyCallbacks: public BLECharacteristicCallbacks {
         // '+' = positive, '-' = negative
         // '1', 'A', 'B' for 1, 10, 100
         char cmd = value[0];
-        int steps = 0;
         
-        if (cmd == '+' && value.length() >= 2) {
-          char magnitude = value[1];
-          if (magnitude == '1') steps = 1;
-          else if (magnitude == 'A') steps = 10;
-          else if (magnitude == 'B') steps = 100;
-        } else if (cmd == '-' && value.length() >= 2) {
-          char magnitude = value[1];
-          if (magnitude == '1') steps = -1;
-          else if (magnitude == 'A') steps = -10;
-          else if (magnitude == 'B') steps = -100;
-        }
-
+        int8_t sign = value[0] == '+' ? 1 : (value[0] == '-' ? -1 : 0);
+        int8_t exponent = value[1] - '0';
+        int steps = sign * pow(10, exponent);
+        
         if (steps != 0) {
           Serial.print("Moving motor: ");
           Serial.print(steps);
